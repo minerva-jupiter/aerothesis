@@ -18,6 +18,9 @@ Purpose of this repository is creating an expressive wind synthesizer, like real
 
 This parts play a role of generating sounds like the reed on a saxophone or the lips on a trumpet.
 
+<details>
+<summary>TL;DR Derivation of the simulation formula</summary>
+
 ##### TL;DR Derivation of the simulation formula
 
 ###### 1. Formulation of the Equations of Motion in Continuous Time
@@ -96,3 +99,5 @@ When calculating the difference between the true value and the approximation (lo
 $$\epsilon_{local} = I_{true} - I_{approx} = \left( \frac{1}{6} - \frac{1}{4} \right) \ddot{f}[n]T^3 + O(T^4) = -\frac{1}{12}\ddot{f}[n]T^3 + O(T^4)$$
 
 Since the error per step is $O(T^3)$ (order 3), the cumulative total truncation error up to the time limit $t$ ($t/T$ steps) is $O(T^2)$ (order 2).
+
+</details>
