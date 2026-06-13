@@ -40,18 +40,18 @@ Let the sampling period be $T$, and consider the integral from continuous time t
 
 The essence of the bilinear transform is to approximate the integrand using a trapezoidal approximation (multiplying the mean value at both ends by the interval width $T$) for the integral from time $(n-1)T$ to $nT$.
 
-####### Discretization of position $x[n]$
+Discretization of position $x[n]$
+```math
+\int_{(n-1)T}^{nT} \frac{dx(t)}{dt} dt = \int_{(n-1)T}^{nT} v(t) dt
 
-$$\int_{(n-1)T}^{nT} \frac{dx(t)}{dt} dt = \int_{(n-1)T}^{nT} v(t) dt$$
+x[n] - x[n-1] = \frac{T}{2} \left( v[n] + v[n-1] \right) \quad \cdots \text{(Equation 1)}
+```
+Discretization of velocity $v[n]$
+```math
+\int_{(n-1)T}^{nT} \frac{dv(t)}{dt} dt = \int_{(n-1)T}^{nT} \frac{1}{m} \left( F(t) - r v(t) - k x(t) \right) dt
 
-$$x[n] - x[n-1] = \frac{T}{2} \left( v[n] + v[n-1] \right) \quad \cdots \text{(Equation 1)}$$
-
-####### Discretization of velocity $v[n]$
-
-$$\int_{(n-1)T}^{nT} \frac{dv(t)}{dt} dt = \int_{(n-1)T}^{nT} \frac{1}{m} \left( F(t) - r v(t) - k x(t) \right) dt$$
-
-$$v[n] - v[n-1] = \frac{T}{2m} \left( F[n] + F[n-1] - r(v[n] + v[n-1]) - k(x[n] + x[n-1]) \right) \quad \cdots \text{(Equation 2)}$$
-
+v[n] - v[n-1] = \frac{T}{2m} \left( F[n] + F[n-1] - r(v[n] + v[n-1]) - k(x[n] + x[n-1]) \right) \quad \cdots \text{(Equation 2)}
+```
 ---
 
 ###### 3. Resolving the Algebraic Loop and Deriving the Simulation Formula
