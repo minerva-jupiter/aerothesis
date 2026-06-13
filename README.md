@@ -42,19 +42,15 @@ The essence of the bilinear transform is to approximate the integrand using a tr
 
 Discretization of position $x[n]$
 
-```math
-\int_{(n-1)T}^{nT} \frac{dx(t)}{dt} dt = \int_{(n-1)T}^{nT} v(t) dt
+$$\int_{(n-1)T}^{nT} \frac{dx(t)}{dt} dt = \int_{(n-1)T}^{nT} v(t) dt$$
 
-x[n] - x[n-1] = \frac{T}{2} \left( v[n] + v[n-1] \right) \quad \cdots \text{(Equation 1)}
-```
+$$x[n] - x[n-1] = \frac{T}{2} \left( v[n] + v[n-1] \right) \quad \cdots \text{(Equation 1)}$$
 
 Discretization of velocity $v[n]$
 
-```math
-\int_{(n-1)T}^{nT} \frac{dv(t)}{dt} dt = \int_{(n-1)T}^{nT} \frac{1}{m} \left( F(t) - r v(t) - k x(t) \right) dt
+$$\int_{(n-1)T}^{nT} \frac{dv(t)}{dt} dt = \int_{(n-1)T}^{nT} \frac{1}{m} \left( F(t) - r v(t) - k x(t) \right) dt$$
 
-v[n] - v[n-1] = \frac{T}{2m} \left( F[n] + F[n-1] - r(v[n] + v[n-1]) - k(x[n] + x[n-1]) \right) \quad \cdots \text{(Equation 2)}
-```
+$$v[n] - v[n-1] = \frac{T}{2m} \left( F[n] + F[n-1] - r(v[n] + v[n-1]) - k(x[n] + x[n-1]) \right) \quad \cdots \text{(Equation 2)}$$
 
 ---
 
