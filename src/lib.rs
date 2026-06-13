@@ -7,6 +7,18 @@ use std::sync::Arc;
 
 struct Aerothesis {
     params: Arc<AerothesisParams>,
+
+    x_prev: f32,
+    v_prev: f32,
+
+    m_prev: f32,
+    r_prev: f32,
+    k_prev: f32,
+    f_prev: f32,
+    sample_rate: f32,
+
+    v_breath: f32,
+    v_bite: f32,
 }
 
 #[derive(Params)]
@@ -17,12 +29,46 @@ struct AerothesisParams {
     /// gain parameter is stored as linear gain while the values are displayed in decibels.
     #[id = "gain"]
     pub gain: FloatParam,
+    #[id = "base_mass"]
+    pub base_mass: FloatParam,
+    #[id = "bite_mass_scale"]
+    pub bite_mass_scale: FloatParam,
+    #[id = "base_stiffness"]
+    pub base_stiffness: FloatParam,
+    #[id = "bite_stiffness_scale"]
+    pub bite_stiffness_scale: FloatParam,
+    #[id = "base_damping"]
+    pub base_damping: FloatParam,
+    #[id = "bite_damping_scale"]
+    pub bite_damping_scale: FloatParam,
+    #[id = "breath_damping"]
+    pub breath_damping: FloatParam,
+    #[id = "pressure_scale"]
+    pub pressure_scale: FloatParam,
+    #[id = "feedback_gain"]
+    pub feedback_gain: FloatParam,
+
+    #[id = "breath_cc"]
+    pub breath_cc: IntParam,
+    #[id = "bite_cc"]
+    pub bite_cc: IntParam,
 }
 
 impl Default for Aerothesis {
     fn default() -> Self {
         Self {
             params: Arc::new(AerothesisParams::default()),
+            x_prev: 0.0,
+            v_prev: 0.0,
+
+            m_prev: 1.0,
+            r_prev: 1.0,
+            k_prev: 1.0,
+            f_prev: 0.0,
+            sample_rate: 44100.0,
+
+            v_breath: 0.0,
+            v_bite: 0.0,
         }
     }
 }
@@ -53,6 +99,78 @@ impl Default for AerothesisParams {
             // `.with_step_size(0.1)` function to get internal rounding.
             .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+
+            base_mass: FloatParam::new(
+                "Base Mass",
+                1.0,
+                FloatRange::Skewed {
+                    min: 0.01,
+                    max: 10.0,
+                    factor: 0.2,
+                },
+            )
+            .with_unit(" mg"),
+            bite_mass_scale: FloatParam::new(
+                "Bite Mass Reduction",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 0.9 },
+            ),
+            base_stiffness: FloatParam::new(
+                "Base Stiffness",
+                1000.0,
+                FloatRange::Skewed {
+                    min: 100.0,
+                    max: 100000.0,
+                    factor: 0.3,
+                },
+            )
+            .with_unit(" N/m"),
+            bite_stiffness_scale: FloatParam::new(
+                "Bite Stiffness Incr.",
+                1.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 10.0,
+                },
+            ),
+            base_damping: FloatParam::new(
+                "Base Damping",
+                0.1,
+                FloatRange::Skewed {
+                    min: 0.001,
+                    max: 1.0,
+                    factor: 0.2,
+                },
+            ),
+            bite_damping_scale: FloatParam::new(
+                "Bite Damping Incr.",
+                1.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 10.0,
+                },
+            ),
+            breath_damping: FloatParam::new(
+                "Breath Damping",
+                0.1,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            pressure_scale: FloatParam::new(
+                "Pressure Gain",
+                10.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 100.0,
+                },
+            ),
+            feedback_gain: FloatParam::new(
+                "Feedback Gain",
+                0.1,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+
+            breath_cc: IntParam::new("Breath CC", 2, IntRange::Linear { min: 0, max: 127 }),
+            bite_cc: IntParam::new("Bite CC", 11, IntRange::Linear { min: 0, max: 127 }),
         }
     }
 }
@@ -80,7 +198,7 @@ impl Plugin for Aerothesis {
         names: PortNames::const_default(),
     }];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::None;
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
 
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
@@ -119,8 +237,21 @@ impl Plugin for Aerothesis {
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        _context: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        while let Some(event) = context.next_event() {
+            match event {
+                NoteEvent::MidiCC { cc, value, .. } => {
+                    if cc == self.params.breath_cc.value() as u8 {
+                        self.v_breath = value;
+                    } else if cc == self.params.bite_cc.value() as u8 {
+                        self.v_bite = value;
+                    }
+                }
+                _ => (),
+            }
+        }
+
         for channel_samples in buffer.iter_samples() {
             // Smoothing is optionally built into the parameters themselves
             let gain = self.params.gain.smoothed.next();
