@@ -67,7 +67,7 @@ impl Default for Aerothesis {
             f_prev: 0.0,
             sample_rate: 44100.0,
 
-            v_breath: 0.0,
+            v_breath: 0.5,
             v_bite: 0.0,
         }
     }
@@ -175,6 +175,54 @@ impl Default for AerothesisParams {
     }
 }
 
+impl Aerothesis {
+    fn m(&self) -> f32 {
+        self.params.base_mass.value() * (1.0 - self.params.bite_mass_scale.value() * self.v_bite)
+    }
+
+    fn r(&self) -> f32 {
+        self.params.base_damping.value()
+            * (1.0 + self.params.bite_damping_scale.value() * self.v_bite)
+            + self.params.breath_damping.value() * self.v_breath
+    }
+
+    fn k(&self) -> f32 {
+        self.params.base_stiffness.value()
+            * (1.0 + self.params.bite_stiffness_scale.value() * self.v_bite)
+    }
+
+    fn f(&self /*, p_downstream: f32*/) -> f32 {
+        self.params.pressure_scale.value() * self.v_breath
+        /* - self.params.feedback_gain.value() * p_downstream */
+    }
+
+    fn x(&self) -> f32 {
+        let m = self.m();
+        let r = self.r();
+        let k = self.k();
+        let f = self.f();
+
+        let t = 1.0 / self.sample_rate;
+        let t_sq = t * t;
+
+        let a = (4.0 * m) / t_sq + (2.0 * r) / t + k;
+
+        let term1 = (4.0 * m / t_sq + 2.0 * r / t) * self.x_prev;
+        let term2 = 2.0 * m * self.v_prev;
+        let term3 = f;
+        let term4 = (m / self.m_prev)
+            * (self.f_prev - self.r_prev * self.v_prev - self.k_prev * self.x_prev);
+
+        let x_calculated = (1.0 / a) * (term1 + term2 + term3 + term4);
+        x_calculated.clamp(-1.0, 1.0)
+    }
+
+    fn v(&self, x: f32) -> f32 {
+        let t = 1.0 / self.sample_rate;
+        (2.0 / t) * (x - self.x_prev) - self.v_prev
+    }
+}
+
 impl Plugin for Aerothesis {
     const NAME: &'static str = "Aerothesis";
     const VENDOR: &'static str = "Minerva_Juppiter";
@@ -219,12 +267,10 @@ impl Plugin for Aerothesis {
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
-        _buffer_config: &BufferConfig,
+        buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
-        // Resize buffers and perform other potentially expensive initialization operations here.
-        // The `reset()` function is always called right after this function. You can remove this
-        // function if you do not need it.
+        self.sample_rate = buffer_config.sample_rate;
         true
     }
 
@@ -240,24 +286,38 @@ impl Plugin for Aerothesis {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         while let Some(event) = context.next_event() {
-            match event {
-                NoteEvent::MidiCC { cc, value, .. } => {
-                    if cc == self.params.breath_cc.value() as u8 {
-                        self.v_breath = value;
-                    } else if cc == self.params.bite_cc.value() as u8 {
-                        self.v_bite = value;
-                    }
+            if let NoteEvent::MidiCC { cc, value, .. } = event {
+                if cc == self.params.breath_cc.value() as u8 {
+                    self.v_breath = value;
+                } else if cc == self.params.bite_cc.value() as u8 {
+                    self.v_bite = value;
                 }
-                _ => (),
             }
         }
 
         for channel_samples in buffer.iter_samples() {
-            // Smoothing is optionally built into the parameters themselves
             let gain = self.params.gain.smoothed.next();
 
+            // Calculate current physical parameters
+            let m = self.m();
+            let r = self.r();
+            let k = self.k();
+            let f = self.f();
+
+            // Calculate next displacement x[n] and velocity v[n]
+            let x_n = self.x();
+            let v_n = self.v(x_n);
+
+            // Update state for next sample
+            self.x_prev = x_n;
+            self.v_prev = v_n;
+            self.m_prev = m;
+            self.r_prev = r;
+            self.k_prev = k;
+            self.f_prev = f;
+
             for sample in channel_samples {
-                *sample *= gain;
+                *sample = x_n * gain;
             }
         }
 

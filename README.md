@@ -89,8 +89,15 @@ $$v[n] = \frac{2}{T}(x[n] - x[n-1]) - v[n-1]$$
 From above, formula for oscillation is
 $$x[n] = \frac{1}{\frac{4m[n]}{T^2} + \frac{2r[n]}{T} + k[n]} \left[ \left( \frac{4m[n]}{T^2} + \frac{2r[n]}{T} \right) x[n-1] + 2m[n]v[n-1] + F[n] + \frac{m[n]}{m[n-1]} \left( F[n-1] - r[n-1]v[n-1] - k[n-1]x[n-1] \right) \right]$$
 $$v[n] = \frac{2}{T}(x[n] - x[n-1]) - v[n-1]$$
+
 Define bite strength $V_{\text{bite}}[n] \in [0.0, 1.0]$,and define breath strength $V_{\text{breath}}[n] \in [0.0, 1.0]$ mass $m[n]$ and others as follows:
-$$m[n] = m_{\text{base}} \cdot \big( 1.0 - \gamma \cdot V_{\text{bite}}[n] \big)$$
-$$r[n] = r_{\text{base}} \cdot \big( 1.0 + \beta \cdot V_{\text{bite}}[n] \big) + \delta \cdot V_{\text{breath}}[n]$$
-$$k[n] = k_{\text{base}} \cdot \big( 1.0 + \alpha \cdot V_{\text{bite}}[n] \big)$$
-$$F[n] = G_{\text{breath}} \cdot V_{\text{breath}}[n] - G_{\text{feedback}} \cdot P_{\text{downstream}}[n]$$$$
+
+$$m[n] = \text{base\_mass} \cdot \big( 1.0 - \text{bite\_mass\_scale} \cdot V_{\text{bite}}[n] \big)$$
+
+$$r[n] = \text{base\_damping} \cdot \big( 1.0 + \text{bite\_damping\_scale} \cdot V_{\text{bite}}[n] \big) + \text{breath\_damping} \cdot V_{\text{breath}}[n]$$
+
+$$k[n] = \text{base\_stiffness} \cdot \big( 1.0 + \text{bite\_stiffness\_scale} \cdot V_{\text{bite}}[n] \big)$$
+
+$$F[n] = \text{pressure\_scale} \cdot V_{\text{breath}}[n] - \text{feedback\_gain} \cdot P_{\text{downstream}}[n]$$
+
+but P_downstream is under construction.
