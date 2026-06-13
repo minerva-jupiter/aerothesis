@@ -23,81 +23,67 @@ This parts play a role of generating sounds like the reed on a saxophone or the 
 
 ##### TL;DR Derivation of the simulation formula
 
-###### 1. Formulation of the Equations of Motion in Continuous Time
+###### 1. Formulation of Time-Varying Differential Equations and Trapezoidal Integrals
 
-Let the displacement of the reed or lip be $x(t)$ and the velocity be $v(t) = \dot{x}(t)$. Given the mass $m$, the braking coefficient $r$, the elastic modulus $k$, and the driving force $F(t) = S \cdot \Delta P(t)$, the system can be described as the following system of first-order differential equations.
+When mass changes over time, the equation of motion should ideally be described not as $m \frac{dv}{dt} = \dots$, but as the time derivative of momentum $p = m v$, $\frac{dp}{dt} = \dots$. However, in the physical modeling of reeds and lips, it is common to take the approximation that "at each instant, it behaves as a harmonic oscillator with the current mass, damping, and elasticity." Therefore, we start with the following system of differential equations.
 
 
 $$\frac{dx(t)}{dt} = v(t)$$
 
-$$m \frac{dv(t)}{dt} + r v(t) + k x(t) = F(t) \implies \frac{dv(t)}{dt} = \frac{1}{m} \left( F(t) - r v(t) - k x(t) \right)$$
+$$\frac{dv(t)}{dt} = \frac{1}{m(t)} \left( F(t) - r(t) v(t) - k(t) x(t) \right)$$
 
----
+Integrate both sides using the trapezoidal approximation (bilinear transformation) over the interval from time $(n-1)T$ to $nT$. For convenience, the values ​​at time $nT$ are denoted as $x[n], v[n], m[n], r[n], k[n], F[n]$.
 
-###### 2. Application of Bilinear Transform (Trapezoidal Integralis)
-
-Let the sampling period be $T$, and consider the integral from continuous time to the digital time axis $t = nT$.
-
-The essence of the bilinear transform is to approximate the integrand using a trapezoidal approximation (multiplying the mean value at both ends by the interval width $T$) for the integral from time $(n-1)T$ to $nT$.
-
-Discretization of position $x[n]$
-
-$$\int_{(n-1)T}^{nT} \frac{dx(t)}{dt} dt = \int_{(n-1)T}^{nT} v(t) dt$$
+Expression at position $x[n]$
 
 $$x[n] - x[n-1] = \frac{T}{2} \left( v[n] + v[n-1] \right) \quad \cdots \text{(Equation 1)}$$
 
-Discretization of velocity $v[n]$
+Expression of velocity $v[n]$
 
-$$\int_{(n-1)T}^{nT} \frac{dv(t)}{dt} dt = \int_{(n-1)T}^{nT} \frac{1}{m} \left( F(t) - r v(t) - k x(t) \right) dt$$
-
-$$v[n] - v[n-1] = \frac{T}{2m} \left( F[n] + F[n-1] - r(v[n] + v[n-1]) - k(x[n] + x[n-1]) \right) \quad \cdots \text{(Equation 2)}$$
+$$v[n] - v[n-1] = \frac{T}{2} \left( \frac{1}{m[n]}\big( F[n] - r[n]v[n] - k[n]x[n] \big) + \frac{1}{m[n-1]}\big( F[n-1] - r[n-1]v[n-1] - k[n-1]x[n-1] \big) \right) \quad \cdots \text{(Equation 2)}$$
 
 ---
 
-###### 3. Resolving the Algebraic Loop and Deriving the Simulation Formula
+###### 2. Resolving the Time-Varying Algebraic Loop
 
-Equations 1 and 2 are implicit relations that include unknown future values ​​(values ​​at time $n$) on both the left and right sides, forming a so-called algebraic loop. We transform this into an explicit update formula that can be computed using the current sample.
+From the system of equations Equations 1 and 2, we eliminate the future velocity $v[n]$ and rearrange it into an explicit form of $x[n]$ that can be calculated using the current sample.
 
-First, we solve Equation 1 for $v[n]$.
-
+First, we isolate the current velocity $v[n]$ from Equation 1.
 
 $$v[n] = \frac{2}{T}(x[n] - x[n-1]) - v[n-1] \quad \cdots \text{(Equation 3)}$$
 
-Substituting Equation 3 into Equation 2 and rearranging for the future displacement $x[n]$, we multiply both sides of Equation 2 by $2m$ and rearrange. The final difference equation is:
+We substitute this Equation 3 only for $v[n]$ on the right-hand side of Equation 2. This allows us to separate the terms containing unknown future variables to the left-hand side and the terms containing known past variables (states of $n-1$ and $n-2$) to the right-hand side.
 
-$$\left( \frac{4m}{T^2} + \frac{2r}{T} + k \right) x[n] = \left( \frac{8m}{T^2} - k \right) x[n-1] - \left( \frac{4m}{T^2} - \frac{2r}{T} \right) x[n-2] + F[n] + F[n-1]$$
+Substituting Equation 3 and rearranging, we derive the following algebraic equation.
 
-Here, the coefficients consisting of time-invariant physical constants are defined as follows:
+$$\left( \frac{4m[n]}{T^2} + \frac{2r[n]}{T} + k[n] \right) x[n] = \left( \frac{4m[n]}{T^2} + \frac{2r[n]}{T} \right) x[n-1] + 2m[n]v[n-1] + F[n] + \frac{m[n]}{m[n-1]} \left( F[n-1] - r[n-1]v[n-1] - k[n-1]x[n-1] \right)$$
 
-$$A = \frac{4m}{T^2} + \frac{2r}{T} + k, \quad B = \frac{8m}{T^2} - k, \quad C = \frac{4m}{T^2} - \frac{2r}{T}$$
+Here, to eliminate the further past velocity state $v[n-1]$, we use the relationship from equation 1 one step back, namely $v[n-1] = \frac{2}{T}(x[n-1] - x[n-2]) - v[n-2]$ While it's possible to complete the transformation by substituting values, in the implementation of the audio DSP, a method is adopted to reduce the computational load by maintaining and updating both "past displacement $x[n-1]$" and "past velocity $v[n-1]$" as state variables.
 
-This determines the approximately correct simulation equation that should be evaluated for each sample within loops such as nih-plug.
+--
 
+###### 3. Simulation Equation to be Updated Every Sample
 
-$$x[n] = \frac{B}{A}x[n-1] - \frac{C}{A}x[n-2] + \frac{1}{A}(F[n] + F[n-1])$$
+At the current sample time $n$, when $m[n], r[n], k[n]$ are determined by input from the aerophone, the time-varying difference equation to be calculated is as follows.
 
----
+1. Calculation of Time-Varying Coefficients
 
-###### 4. Why this equation is "approximately correct" (Mathematical proof)
+For each sample, the coefficient $A[n]$ is calculated from the current physical parameters. Past coefficients and terms involving mass ratios are multiplied as they are.
 
-We will prove, using a Taylor expansion, that this difference equation obtained by the bilinear transformation converges with high accuracy to the solution of the original continuous-time differential equation (the local truncation error is $O(T^3)$).
+$$A[n] = \frac{4m[n]}{T^2} + \frac{2r[n]}{T} + k[n]$$
 
-We will verify the error of the trapezoidal rule for the time integral of the continuous function $f(t)$. Taylor expanding $f(t)$ around $t = nT$ gives:
+2. Determination of the current displacement $x[n]$
 
-$$f(t) = f[n] + \dot{f}[n](t - nT) + \frac{\ddot{f}[n]}{2}(t - nT)^2 + O((t - nT)^3)$$
+$$x[n] = \frac{1}{A[n]} \left[ \left( \frac{4m[n]}{T^2} + \frac{2r[n]}{T} \right) x[n-1] + 2m[n]v[n-1] + F[n] + \frac{m[n]}{m[n-1]} \left( F[n-1] - r[n-1]v[n-1] - k[n-1]x[n-1] \right) \right]$$
 
-The true integral of this from $(n-1)T$ to $nT$, $I_{true}$, is:
+3. Updating the velocity $v[n]$ for the next sample
 
-$$I_{true} = \int_{-T}^{0} \left( f[n] + \dot{f}[n]\tau + \frac{\ddot{f}[n]}{2}\tau^2 + \dots \right) d\tau = f[n]T - \frac{\dot{f}[n]}{2}T^2 + \frac{\ddot{f}[n]}{6}T^3 + O(T^4)$$
+Using the obtained $x[n]$, the current velocity can be obtained from equation 3. Calculate $v[n]$ and update the state variable.
 
-On the other hand, the approximation $I_{approx}$ using the bilinear transformation (trapezoidal rule) is obtained by using the equation $f[n-1] = f[n] - \dot{f}[n]T + \frac{\ddot{f}[n]}{2}T^2 - \dots$ obtained by Taylor expanding $f[n-1]$ in the reverse direction around $t = nT$:
-
-$$I_{approx} = \frac{T}{2}(f[n] + f[n-1]) = \frac{T}{2} \left( 2f[n] - \dot{f}[n]T + \frac{\ddot{f}[n]}{2}T^2 \right) = f[n]T - \frac{\dot{f}[n]}{2}T^2 + \frac{\ddot{f}[n]}{4}T^3 + O(T^4)$$
-
-When calculating the difference between the true value and the approximation (local truncation error $\epsilon_{local}$), the lower-order terms completely cancel each other out.
-
-$$\epsilon_{local} = I_{true} - I_{approx} = \left( \frac{1}{6} - \frac{1}{4} \right) \ddot{f}[n]T^3 + O(T^4) = -\frac{1}{12}\ddot{f}[n]T^3 + O(T^4)$$
-
-Since the error per step is $O(T^3)$ (order 3), the cumulative total truncation error up to the time limit $t$ ($t/T$ steps) is $O(T^2)$ (order 2).
+$$v[n] = \frac{2}{T}(x[n] - x[n-1]) - v[n-1]$$
 
 </details>
+
+##### Formula for Ocillation
+
+From above,
