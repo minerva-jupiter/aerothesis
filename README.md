@@ -100,4 +100,62 @@ $$k[n] = \text{base\_stiffness} \cdot \big( 1.0 + \text{bite\_stiffness\_scale} 
 
 $$F[n] = \text{pressure\_scale} \cdot V_{\text{breath}}[n] - \text{feedback\_gain} \cdot P_{\text{downstream}}[n]$$
 
-but P_downstream is under construction.
+P_downstream is under construction.
+
+However, this model only produces damped oscillations.
+By applying equations derived from fluid dynamics, such as those used by Reed, to F, we can create a continuous oscillation.
+
+<details>
+<summary>Physical Modeling: Fluid-Oscillator Interaction</summary>
+
+The oscillator is driven by the fluid force $f(t)$ derived from the Bernoulli principle, incorporating the inertial effect of the fluid column.
+
+###### 1. Fluid Dynamics
+
+The fluid velocity $v_f(n)$ is governed by the momentum balance, where the air column with length $L$ acts as an inductor (inertia):
+
+$$\frac{\rho L}{T} (v_f[n] - v_f[n-1]) + B[n] v_f[n]^2 = P(n)$$
+
+Where:
+
+* $\rho$: Air density.
+* $L$: Effective length of the fluid column.
+* $T$: Sampling interval.
+* $B[n] = \frac{\rho}{4 (2 - x[n])^2}$: Geometry-dependent coefficient.
+* $P(n)$: Effective pressure (Breath pressure minus feedback).
+
+Solving for $v_f[n]$ at each sample provides the driving force:
+
+$$v_f[n] = \frac{-A + \sqrt{A^2 + 4 B[n] (A v_f[n-1] + C[n-1])}}{2 B[n]}$$
+
+
+*(where $A = \frac{\rho L}{T}$ and $C[n-1] = P - B[n-1] v_f[n-1]^2$)*
+
+###### 2. Oscillator Coupling
+
+The oscillator is defined by a second-order differential equation $m \ddot{x} + r \dot{x} + k x = f$. The external force $f[n]$ is mapped based on the selected instrument mode:
+
+* **Saxophone Mode:**
+
+$$f[n] = \frac{1}{2} \rho v_f[n]^2 (2 - x[n])$$
+
+
+
+*Driven by negative pressure (suction) as air flows through the gap.*
+* **Trumpet Mode:**
+
+$$f[n] = -\frac{1}{2} \rho v_f[n]^2 (2 - x[n])$$
+
+
+
+*Driven by positive pressure pushing the lips outward.*
+
+###### 3. Discrete Implementation (Bilinear Transform)
+
+The equation is discretized using the bilinear transform into a second-order difference equation:
+
+$$a_0 x[n] + a_1 x[n-1] + a_2 x[n-2] = b_0 f[n] + b_1 f[n-1] + b_2 f[n-2]$$
+
+The system preserves energy by accounting for parameter modulation (bite-dependent $m, k, r$) via energy-preserving compensation terms in the discrete state-space formulation.
+
+</details>

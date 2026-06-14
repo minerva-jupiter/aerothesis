@@ -5,30 +5,47 @@ use std::sync::Arc;
 // https://github.com/robbert-vdh/nih-plug/blob/master/plugins/examples/gain/src/lib.rs to get
 // started
 
-struct Aerothesis {
-    params: Arc<AerothesisParams>,
+pub struct Aerothesis {
+    pub params: Arc<AerothesisParams>,
 
-    x_prev: f32,
-    v_prev: f32,
+    pub x_prev: f32,
+    pub x_prev2: f32,
 
-    m_prev: f32,
-    r_prev: f32,
-    k_prev: f32,
-    f_prev: f32,
-    sample_rate: f32,
+    pub v_prev: f32,
 
-    v_breath: f32,
-    v_bite: f32,
+    pub f_prev: f32,
+    pub f_prev2: f32,
+    pub sample_rate: f32,
+
+    pub v_breath: f32,
+    pub v_bite: f32,
+
+    pub v_fluid_prev: f32,
+}
+
+#[derive(Enum, PartialEq, Clone, Copy)]
+pub enum InstrumentType {
+    #[name = "Single Reed"]
+    SingleReed,
+    #[name = "Rip Reed"]
+    LipReed,
 }
 
 #[derive(Params)]
-struct AerothesisParams {
+pub struct AerothesisParams {
     /// The parameter's ID is used to identify the parameter in the wrappred plugin API. As long as
     /// these IDs remain constant, you can rename and reorder these fields as you wish. The
     /// parameters are exposed to the host in the same order they were defined. In this case, this
     /// gain parameter is stored as linear gain while the values are displayed in decibels.
     #[id = "gain"]
     pub gain: FloatParam,
+
+    #[id = "instrument_type"]
+    pub instrument_type: EnumParam<InstrumentType>,
+
+    #[id = "ReedLength"]
+    pub reed_length: FloatParam,
+
     #[id = "base_mass"]
     pub base_mass: FloatParam,
     #[id = "bite_mass_scale"]
@@ -59,16 +76,15 @@ impl Default for Aerothesis {
         Self {
             params: Arc::new(AerothesisParams::default()),
             x_prev: 0.0,
+            x_prev2: 0.0,
             v_prev: 0.0,
-
-            m_prev: 1.0,
-            r_prev: 1.0,
-            k_prev: 1.0,
             f_prev: 0.0,
+            f_prev2: 0.0,
             sample_rate: 44100.0,
 
             v_breath: 0.5,
             v_bite: 0.0,
+            v_fluid_prev: 0.0,
         }
     }
 }
@@ -100,16 +116,27 @@ impl Default for AerothesisParams {
             .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
 
-            base_mass: FloatParam::new(
-                "Base Mass",
-                1.0,
+            instrument_type: EnumParam::new("Instrument Type", InstrumentType::SingleReed),
+
+            reed_length: FloatParam::new(
+                "Reed Length",
+                0.005,
                 FloatRange::Skewed {
                     min: 0.01,
-                    max: 10.0,
+                    max: 1.0,
                     factor: 0.2,
                 },
-            )
-            .with_unit(" mg"),
+            ),
+
+            base_mass: FloatParam::new(
+                "Base Mass",
+                0.01,
+                FloatRange::Skewed {
+                    min: 0.01,
+                    max: 1000.0,
+                    factor: 0.2,
+                },
+            ),
             bite_mass_scale: FloatParam::new(
                 "Bite Mass Reduction",
                 0.5,
@@ -117,14 +144,13 @@ impl Default for AerothesisParams {
             ),
             base_stiffness: FloatParam::new(
                 "Base Stiffness",
-                1000.0,
+                5.0,
                 FloatRange::Skewed {
                     min: 100.0,
-                    max: 100000.0,
+                    max: 1000000.0,
                     factor: 0.3,
                 },
-            )
-            .with_unit(" N/m"),
+            ),
             bite_stiffness_scale: FloatParam::new(
                 "Bite Stiffness Incr.",
                 1.0,
@@ -135,7 +161,7 @@ impl Default for AerothesisParams {
             ),
             base_damping: FloatParam::new(
                 "Base Damping",
-                0.1,
+                0.01,
                 FloatRange::Skewed {
                     min: 0.001,
                     max: 1.0,
@@ -176,48 +202,106 @@ impl Default for AerothesisParams {
 }
 
 impl Aerothesis {
-    fn m(&self) -> f32 {
-        self.params.base_mass.value() * (1.0 - self.params.bite_mass_scale.value() * self.v_bite)
+    pub fn step(&mut self) -> f32 {
+        let x_n = self.x();
+        let v_n = self.v(x_n);
+
+        self.x_prev2 = self.x_prev;
+        self.x_prev = x_n;
+
+        self.f_prev2 = self.f_prev;
+        self.f_prev = self.f();
+
+        self.v_prev = v_n;
+        self.v_fluid_prev = self.vf();
+
+        x_n
     }
 
-    fn r(&self) -> f32 {
-        self.params.base_damping.value()
-            * (1.0 + self.params.bite_damping_scale.value() * self.v_bite)
-            + self.params.breath_damping.value() * self.v_breath
+    pub fn m(&self) -> f32 {
+        // self.params.base_mass.value() * (1.0 - self.params.bite_mass_scale.value() * self.v_bite)
+        0.01 * (1.0 - 0.1)
     }
 
-    fn k(&self) -> f32 {
-        self.params.base_stiffness.value()
-            * (1.0 + self.params.bite_stiffness_scale.value() * self.v_bite)
+    pub fn r(&self) -> f32 {
+        // self.params.base_damping.value()
+        //     * (1.0 + self.params.bite_damping_scale.value() * self.v_bite)
+        0.01 * (1.0 + 0.1)
     }
 
-    fn f(&self /*, p_downstream: f32*/) -> f32 {
-        self.params.pressure_scale.value() * self.v_breath
-        /* - self.params.feedback_gain.value() * p_downstream */
+    pub fn k(&self) -> f32 {
+        // self.params.base_stiffness.value()
+        //     * (1.0 + self.params.bite_stiffness_scale.value() * self.v_bite)
+        3.3 * (1.0 + 0.1)
     }
+    pub fn vf(&self) -> f32 {
+        const EPS: f32 = 1e-5;
+        const RHO: f32 = 1.2;
+        let t = 1.0 / self.sample_rate;
 
-    fn x(&self) -> f32 {
+        let a_fluid = (RHO * self.params.reed_length.value()) / t;
+
+        let gap_prev = (2.0 - self.x_prev).clamp(EPS, 2.0);
+        let b_prev = RHO / (4.0 * (gap_prev * gap_prev));
+        let c_prev = self.v_breath - b_prev * (self.v_fluid_prev * self.v_fluid_prev);
+
+        let gap_curr = (2.0 - self.x_prev).clamp(EPS, 2.0);
+        let b_curr = RHO / (4.0 * (gap_curr * gap_curr));
+
+        let v_fluid_current = if gap_curr <= EPS {
+            0.0
+        } else {
+            let discriminant = if a_fluid * a_fluid
+                + 4.0 * b_curr * (a_fluid * self.v_fluid_prev + c_prev)
+                < 0.0
+            {
+                0.0
+            } else {
+                a_fluid * a_fluid + 4.0 * b_curr * (a_fluid * self.v_fluid_prev + c_prev)
+            };
+            let numerator = -a_fluid + discriminant.sqrt();
+            numerator / (2.0 * b_curr)
+        };
+        v_fluid_current
+    }
+    pub fn f(&self) -> f32 {
+        const EPS: f32 = 1e-5;
+        const RHO: f32 = 1.2;
+
+        let gap_curr = (2.0 - self.x_prev).clamp(EPS, 2.0);
+
+        let v_fluid_current = self.vf();
+
+        let f_current = if self.x_prev >= 2.0 {
+            0.0
+        } else {
+            0.5 * RHO * (v_fluid_current * v_fluid_current) * gap_curr
+        };
+        f_current
+    }
+    pub fn x(&self) -> f32 {
         let m = self.m();
         let r = self.r();
         let k = self.k();
-        let f = self.f();
-
         let t = 1.0 / self.sample_rate;
-        let t_sq = t * t;
+        let f_current = self.f();
 
-        let a = (4.0 * m) / t_sq + (2.0 * r) / t + k;
+        let b0 = t * t;
+        let b1 = 2.0 * t * t;
+        let b2 = t * t;
 
-        let term1 = (4.0 * m / t_sq + 2.0 * r / t) * self.x_prev;
-        let term2 = 2.0 * m * self.v_prev;
-        let term3 = f;
-        let term4 = (m / self.m_prev)
-            * (self.f_prev - self.r_prev * self.v_prev - self.k_prev * self.x_prev);
+        let a0 = 4.0 * m + 2.0 * r * t + k * t * t;
+        let a1 = -8.0 * m + 2.0 * k * t * t;
+        let a2 = 4.0 * m - 2.0 * r * t + k * t * t;
 
-        let x_calculated = (1.0 / a) * (term1 + term2 + term3 + term4);
-        x_calculated.clamp(-1.0, 1.0)
+        ((b0 * f_current + b1 * self.f_prev + b2 * self.f_prev2
+            - a1 * self.x_prev
+            - a2 * self.x_prev2)
+            / a0)
+            .clamp(0.0, 2.0)
     }
 
-    fn v(&self, x: f32) -> f32 {
+    pub fn v(&self, x: f32) -> f32 {
         let t = 1.0 / self.sample_rate;
         (2.0 / t) * (x - self.x_prev) - self.v_prev
     }
@@ -246,7 +330,7 @@ impl Plugin for Aerothesis {
         names: PortNames::const_default(),
     }];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
 
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
@@ -286,38 +370,26 @@ impl Plugin for Aerothesis {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         while let Some(event) = context.next_event() {
-            if let NoteEvent::MidiCC { cc, value, .. } = event {
-                if cc == self.params.breath_cc.value() as u8 {
-                    self.v_breath = value;
-                } else if cc == self.params.bite_cc.value() as u8 {
-                    self.v_bite = value;
+            match event {
+                NoteEvent::MidiCC { cc, value, .. } => {
+                    if cc as i32 == self.params.breath_cc.value() {
+                        self.v_breath = value;
+                    } else if cc as i32 == self.params.bite_cc.value() {
+                        self.v_bite = value;
+                    }
                 }
+                _ => (),
             }
         }
 
         for channel_samples in buffer.iter_samples() {
             let gain = self.params.gain.smoothed.next();
 
-            // Calculate current physical parameters
-            let m = self.m();
-            let r = self.r();
-            let k = self.k();
-            let f = self.f();
-
-            // Calculate next displacement x[n] and velocity v[n]
-            let x_n = self.x();
-            let v_n = self.v(x_n);
-
-            // Update state for next sample
-            self.x_prev = x_n;
-            self.v_prev = v_n;
-            self.m_prev = m;
-            self.r_prev = r;
-            self.k_prev = k;
-            self.f_prev = f;
+            let x_n = self.step();
+            self.v_fluid_prev = self.vf();
 
             for sample in channel_samples {
-                *sample = x_n * gain;
+                *sample = (x_n - 1.0).clamp(-1.0, 1.0) * gain;
             }
         }
 
@@ -332,7 +404,11 @@ impl ClapPlugin for Aerothesis {
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
 
     // Don't forget to change these features
-    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::AudioEffect,
+        ClapFeature::Stereo,
+        ClapFeature::NoteDetector,
+    ];
 }
 
 // impl Vst3Plugin for Aerothesis {
