@@ -1,4 +1,5 @@
-use aerothesis::Aerothesis;
+use aerothesis::{Aerothesis, BoundaryType, OscillationType};
+use rustfft::{num_complex::Complex, FftPlanner};
 use textplots::{Chart, Plot, Shape};
 
 fn custom_step(plugin: &mut Aerothesis, m: f32, r: f32, k: f32) -> f32 {
@@ -59,34 +60,73 @@ fn custom_step(plugin: &mut Aerothesis, m: f32, r: f32, k: f32) -> f32 {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut plugin = Aerothesis::default();
     let sample_rate = 44100.0;
-    let seconds = 0.02;
+    let seconds = 1.0;
     let num_samples = (sample_rate * seconds) as usize;
     let mut data = Vec::with_capacity(num_samples);
-
-    // Balance for amplitude: m=0.0005, k=2000 (fn ~ 318Hz)
-    let m = 0.0005;
-    let r = 0.0001; // Extremely low damping
-    let k = 2000.0;
+    let mut p_mouth_signal = Vec::with_capacity(num_samples);
 
     plugin.sample_rate = sample_rate;
 
-    println!(
-        "Starting simulation for Large Amplitude (m={}, k={}, r={})...",
-        m, k, r
-    );
-
     for i in 0..num_samples {
-        // Very strong breath pressure
-        plugin.v_breath = if i < 100 {
-            (i as f32 / 100.0) * 100.0
+        plugin.v_breath = if i < 1000 {
+            (i as f32 / 1000.0) * 40.0
         } else {
-            100.0
+            40.0
         };
-        data.push((i as f32, custom_step(&mut plugin, m, r, k)));
+
+        let p_total = plugin.v_breath + plugin.p_minus;
+        let (x_n, vf_n) = plugin.reed.step(
+            p_total,
+            plugin.params.oscillation_type.value(),
+            plugin.sample_rate,
+            &plugin.params,
+            plugin.v_bite,
+        );
+
+        let gap = (2.0 - x_n).max(1e-5);
+        let u = vf_n * gap;
+        let p_mouth = plugin.p_minus + plugin.bore.z0 * u;
+        let p_plus = p_mouth - plugin.p_minus;
+
+        plugin.p_minus = plugin.bore.step(
+            p_plus,
+            1.0 / sample_rate,
+            BoundaryType::NonlinearDissipative,
+        );
+
+        if i < (sample_rate * 0.05) as usize {
+            data.push((i as f32, p_mouth));
+        }
+        p_mouth_signal.push(p_mouth);
     }
 
-    Chart::new(180, 60, 0.0, num_samples as f32)
+    Chart::new(180, 60, 0.0, data.len() as f32)
         .lineplot(&Shape::Lines(&data))
+        .display();
+
+    let fft_len = p_mouth_signal.len().next_power_of_two();
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(fft_len);
+
+    let mut buffer: Vec<Complex<f32>> = p_mouth_signal
+        .iter()
+        .map(|&p| Complex { re: p, im: 0.0 })
+        .collect();
+    buffer.resize(fft_len, Complex { re: 0.0, im: 0.0 });
+
+    fft.process(&mut buffer);
+
+    let mut spectrum_data = Vec::with_capacity(fft_len / 2);
+    for (i, complex) in buffer.iter().enumerate().take(fft_len / 2) {
+        let freq = (i as f32 * sample_rate) / fft_len as f32;
+        if freq > 1500.0 {
+            break;
+        }
+        spectrum_data.push((freq, complex.norm()));
+    }
+
+    Chart::new(180, 60, 0.0, 1500.0)
+        .lineplot(&Shape::Lines(&spectrum_data))
         .display();
 
     Ok(())
