@@ -82,7 +82,7 @@ impl Default for Aerothesis {
             f_prev2: 0.0,
             sample_rate: 44100.0,
 
-            v_breath: 0.5,
+            v_breath: 0.1,
             v_bite: 0.0,
             v_fluid_prev: 0.0,
         }
@@ -120,20 +120,20 @@ impl Default for AerothesisParams {
 
             reed_length: FloatParam::new(
                 "Reed Length",
-                0.005,
+                0.01,
                 FloatRange::Skewed {
-                    min: 0.01,
-                    max: 1.0,
+                    min: 0.001,
+                    max: 0.1,
                     factor: 0.2,
                 },
             ),
 
             base_mass: FloatParam::new(
                 "Base Mass",
-                0.01,
+                0.0005,
                 FloatRange::Skewed {
-                    min: 0.01,
-                    max: 1000.0,
+                    min: 0.0001,
+                    max: 0.01,
                     factor: 0.2,
                 },
             ),
@@ -144,16 +144,16 @@ impl Default for AerothesisParams {
             ),
             base_stiffness: FloatParam::new(
                 "Base Stiffness",
-                5.0,
+                2000.0,
                 FloatRange::Skewed {
                     min: 100.0,
-                    max: 1000000.0,
+                    max: 20000.0,
                     factor: 0.3,
                 },
             ),
             bite_stiffness_scale: FloatParam::new(
                 "Bite Stiffness Incr.",
-                1.0,
+                2.0,
                 FloatRange::Linear {
                     min: 0.0,
                     max: 10.0,
@@ -161,10 +161,10 @@ impl Default for AerothesisParams {
             ),
             base_damping: FloatParam::new(
                 "Base Damping",
-                0.01,
+                0.001,
                 FloatRange::Skewed {
-                    min: 0.001,
-                    max: 1.0,
+                    min: 0.0001,
+                    max: 0.1,
                     factor: 0.2,
                 },
             ),
@@ -183,10 +183,10 @@ impl Default for AerothesisParams {
             ),
             pressure_scale: FloatParam::new(
                 "Pressure Gain",
-                10.0,
+                50.0,
                 FloatRange::Linear {
                     min: 0.0,
-                    max: 100.0,
+                    max: 200.0,
                 },
             ),
             feedback_gain: FloatParam::new(
@@ -219,20 +219,17 @@ impl Aerothesis {
     }
 
     pub fn m(&self) -> f32 {
-        // self.params.base_mass.value() * (1.0 - self.params.bite_mass_scale.value() * self.v_bite)
-        0.01 * (1.0 - 0.1)
+        self.params.base_mass.value() * (1.0 - self.params.bite_mass_scale.value() * self.v_bite)
     }
 
     pub fn r(&self) -> f32 {
-        // self.params.base_damping.value()
-        //     * (1.0 + self.params.bite_damping_scale.value() * self.v_bite)
-        0.01 * (1.0 + 0.1)
+        self.params.base_damping.value()
+            * (1.0 + self.params.bite_damping_scale.value() * self.v_bite)
     }
 
     pub fn k(&self) -> f32 {
-        // self.params.base_stiffness.value()
-        //     * (1.0 + self.params.bite_stiffness_scale.value() * self.v_bite)
-        3.3 * (1.0 + 0.1)
+        self.params.base_stiffness.value()
+            * (1.0 + self.params.bite_stiffness_scale.value() * self.v_bite)
     }
     pub fn vf(&self) -> f32 {
         const EPS: f32 = 1e-5;
@@ -245,24 +242,19 @@ impl Aerothesis {
         let b_prev = RHO / (4.0 * (gap_prev * gap_prev));
         let c_prev = self.v_breath - b_prev * (self.v_fluid_prev * self.v_fluid_prev);
 
+        // Current gap is also based on x_prev in this discrete model for stability
         let gap_curr = (2.0 - self.x_prev).clamp(EPS, 2.0);
         let b_curr = RHO / (4.0 * (gap_curr * gap_curr));
 
-        let v_fluid_current = if gap_curr <= EPS {
+        if gap_curr <= EPS {
             0.0
         } else {
-            let discriminant = if a_fluid * a_fluid
-                + 4.0 * b_curr * (a_fluid * self.v_fluid_prev + c_prev)
-                < 0.0
-            {
-                0.0
-            } else {
-                a_fluid * a_fluid + 4.0 * b_curr * (a_fluid * self.v_fluid_prev + c_prev)
-            };
+            let discriminant = (a_fluid * a_fluid
+                + 4.0 * b_curr * (a_fluid * self.v_fluid_prev + c_prev))
+                .max(0.0);
             let numerator = -a_fluid + discriminant.sqrt();
             numerator / (2.0 * b_curr)
-        };
-        v_fluid_current
+        }
     }
     pub fn f(&self) -> f32 {
         const EPS: f32 = 1e-5;
@@ -304,6 +296,15 @@ impl Aerothesis {
     pub fn v(&self, x: f32) -> f32 {
         let t = 1.0 / self.sample_rate;
         (2.0 / t) * (x - self.x_prev) - self.v_prev
+    }
+    fn equilibrium_offset(&self) -> f32 {
+        let f = self.f();
+        let k = self.k();
+        if k > 0.0 {
+            (f / k).clamp(0.0, 1.8)
+        } else {
+            0.0
+        }
     }
 }
 
@@ -371,9 +372,14 @@ impl Plugin for Aerothesis {
     ) -> ProcessStatus {
         while let Some(event) = context.next_event() {
             match event {
-                NoteEvent::MidiCC { cc, value, .. } => {
+                NoteEvent::MidiCC {
+                    timing: _,
+                    channel: _,
+                    cc,
+                    value,
+                } => {
                     if cc as i32 == self.params.breath_cc.value() {
-                        self.v_breath = value;
+                        self.v_breath = value * self.params.pressure_scale.value();
                     } else if cc as i32 == self.params.bite_cc.value() {
                         self.v_bite = value;
                     }
@@ -389,7 +395,7 @@ impl Plugin for Aerothesis {
             self.v_fluid_prev = self.vf();
 
             for sample in channel_samples {
-                *sample = (x_n - 1.0).clamp(-1.0, 1.0) * gain;
+                *sample = (x_n - self.equilibrium_offset()).clamp(-1.0, 1.0) * gain;
             }
         }
 
