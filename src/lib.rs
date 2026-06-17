@@ -465,7 +465,6 @@ impl Aerothesis {
         let b_prev = RHO / (4.0 * (gap_prev * gap_prev));
         let c_prev = self.v_breath - b_prev * (self.v_fluid_prev * self.v_fluid_prev);
 
-        // Current gap is also based on x_prev in this discrete model for stability
         let gap_curr = (2.0 - self.x_prev).clamp(EPS, 2.0);
         let b_curr = RHO / (4.0 * (gap_curr * gap_curr));
 

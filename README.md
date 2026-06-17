@@ -21,7 +21,6 @@ This parts play a role of generating sounds like the reed on a saxophone or the 
 <details>
 <summary>TL;DR Derivation of the simulation formula</summary>
 
-```markdown
 ## Physical Modeling and Discretization Process
 
 This plugin simulates the sound generation mechanism of a reed instrument (or lip-reed instrument) by coupling a continuous-time mechanical oscillator with a non-linear fluid dynamics engine.
@@ -139,7 +138,6 @@ $$|z|^2 = \left| \frac{1 + \frac{T}{2}s}{1 - \frac{T}{2}s} \right|^2 = \frac{(1 
 Since $\sigma < 0$, $(1 + \frac{T}{2}\sigma)^2 < (1 - \frac{T}{2}\sigma)^2$, mathematically guaranteeing $|z| < 1$.
 
 > **Conclusion:** The system remains **unconditionally stable** regardless of real-time sampling rate modifications or aggressive parameter modulation ($m, k, r$ adjustments via bite intensity), eliminating numerical explosion risks common in forward-Euler methods.
-```
 
 </details>
 
@@ -155,10 +153,6 @@ $$v_f[n] = \frac{-\alpha + \sqrt{\alpha^2 + 4 B[n] \Gamma[n-1]}}{2 B[n]}$$
 
 <details>
 <summary>Physical Modeling of Boundary Dissipation in Open-Ended Acoustic Tubes</summary>
-
-This document provides the theoretical background, mathematical derivation, and discrete-time modeling of the acoustic reflection and energy dissipation at the open end (bell) of a resonant tube. Rather than using an empirical low-pass filter to attenuate high-frequency components, this model derives the high-frequency decay directly from the **physical mechanics of particle motion and nonlinear aerodynamic resistance** at the boundary.
-
----
 
 ## 1. Physical Phenomenon: Open-End Reflection and Turbulence
 
