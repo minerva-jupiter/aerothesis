@@ -1,193 +1,9 @@
 use nih_plug::prelude::*;
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 // This is a shortened version of the gain example with most comments removed, check out
 // https://github.com/robbert-vdh/nih-plug/blob/master/plugins/examples/gain/src/lib.rs to get
 // started
-
-const RHO: f32 = 1.2;
-const C_SPEED: f32 = 340.0;
-const RADIUS: f32 = 0.015;
-
-pub struct Bore {
-    pub delay_buffer: Vec<f32>,
-    pub pointer: usize,
-    pub z0: f32,
-    pub m_e: f32,
-    pub r_loss: f32,
-    pub v_prev: f32,
-}
-
-impl Bore {
-    pub fn new(target_freq: f32, sample_rate: f32, boundary_type: BoundaryType) -> Self {
-        let wavelength_factor = match boundary_type {
-            BoundaryType::NonlinearDissipative => 2.0,
-            BoundaryType::Fixed => 1.0,
-        };
-        let delay_samples = (sample_rate / (target_freq * wavelength_factor)).round() as usize;
-        let s = std::f32::consts::PI * RADIUS * RADIUS;
-        let z0 = (RHO * C_SPEED) / s;
-        let delta_l = 0.613 * RADIUS;
-        let m_e = RHO * s * delta_l;
-        let r_loss = 0.5 * RHO * s;
-
-        Self {
-            delay_buffer: vec![0.0; delay_samples],
-            pointer: 0,
-            z0,
-            m_e,
-            r_loss,
-            v_prev: 0.0,
-        }
-    }
-
-    pub fn set_frequency(
-        &mut self,
-        target_freq: f32,
-        sample_rate: f32,
-        boundary_type: BoundaryType,
-    ) {
-        let wavelength_factor = match boundary_type {
-            BoundaryType::NonlinearDissipative => 2.0,
-            BoundaryType::Fixed => 1.0,
-        };
-        let delay_samples = (sample_rate / (target_freq * wavelength_factor)).round() as usize;
-        if delay_samples != self.delay_buffer.len() && delay_samples > 0 {
-            self.delay_buffer.resize(delay_samples, 0.0);
-            if self.pointer >= delay_samples {
-                self.pointer = 0;
-            }
-        }
-    }
-
-    pub fn step(&mut self, p_plus_in: f32, t: f32, boundary_type: BoundaryType) -> f32 {
-        if self.delay_buffer.is_empty() {
-            return 0.0;
-        }
-
-        let p_minus_out = self.delay_buffer[self.pointer];
-
-        let p_minus_reflected = match boundary_type {
-            BoundaryType::NonlinearDissipative => {
-                let s = std::f32::consts::PI * RADIUS * RADIUS;
-                let b_bc = (self.m_e / t) + (s * self.z0);
-                let c_bc = 2.0 * s * p_plus_in + (self.m_e / t) * self.v_prev;
-
-                let discriminant = (b_bc * b_bc + 4.0 * self.r_loss * c_bc).max(0.0);
-                let v_current = (-b_bc + discriminant.sqrt()) / (2.0 * self.r_loss);
-
-                let res = p_plus_in - self.z0 * v_current;
-                self.v_prev = v_current;
-                res
-            }
-            BoundaryType::Fixed => p_plus_in,
-        };
-
-        self.delay_buffer[self.pointer] = p_minus_reflected;
-        self.pointer = (self.pointer + 1) % self.delay_buffer.len();
-
-        p_minus_out
-    }
-
-    pub fn reset(&mut self) {
-        for val in self.delay_buffer.iter_mut() {
-            *val = 0.0;
-        }
-        self.pointer = 0;
-        self.v_prev = 0.0;
-    }
-}
-
-pub struct Reed {
-    pub x_prev1: f32,
-    pub x_prev2: f32,
-    pub f_prev1: f32,
-    pub f_prev2: f32,
-    pub vf_prev1: f32,
-}
-
-impl Reed {
-    pub fn new() -> Self {
-        Self {
-            x_prev1: 0.0,
-            x_prev2: 0.0,
-            f_prev1: 0.0,
-            f_prev2: 0.0,
-            vf_prev1: 0.0,
-        }
-    }
-
-    pub fn step(
-        &mut self,
-        p_total: f32,
-        oscillation_type: OscillationType,
-        sample_rate: f32,
-        params: &AerothesisParams,
-        v_bite: f32,
-    ) -> (f32, f32) {
-        let t = 1.0 / sample_rate;
-        const EPS: f32 = 1e-5;
-
-        let gap_curr = (2.0 - self.x_prev1).max(EPS);
-        let b_curr = RHO / (4.0 * gap_curr * gap_curr);
-        let a_fluid = (RHO * params.reed_length.value()) / t;
-
-        let c_prev = p_total - b_curr * (self.vf_prev1 * self.vf_prev1);
-        let discriminant =
-            (a_fluid * a_fluid + 4.0 * b_curr * (a_fluid * self.vf_prev1 + c_prev)).max(0.0);
-        let vf_current = (-a_fluid + discriminant.sqrt()) / (2.0 * b_curr);
-
-        let mut f_current = if self.x_prev1 >= 2.0 {
-            0.0
-        } else {
-            0.5 * RHO * (vf_current * vf_current) * gap_curr
-        };
-
-        if oscillation_type == OscillationType::LipReed {
-            f_current = -f_current;
-        }
-
-        let m = params.base_mass.value() * (1.0 - params.bite_mass_scale.value() * v_bite);
-        let r = params.base_damping.value() * (1.0 + params.bite_damping_scale.value() * v_bite);
-        let k =
-            params.base_stiffness.value() * (1.0 + params.bite_stiffness_scale.value() * v_bite);
-
-        let b0 = t * t;
-        let b1 = 2.0 * t * t;
-        let b2 = t * t;
-
-        let a0 = 4.0 * m + 2.0 * r * t + k * t * t;
-        let a1 = -8.0 * m + 2.0 * k * t * t;
-        let a2 = 4.0 * m - 2.0 * r * t + k * t * t;
-
-        let mut x_n = (b0 * f_current + b1 * self.f_prev1 + b2 * self.f_prev2
-            - a1 * self.x_prev1
-            - a2 * self.x_prev2)
-            / a0;
-
-        if x_n >= 2.0 {
-            x_n = 2.0;
-        } else if x_n < 0.0 {
-            x_n = 0.0;
-        }
-
-        self.x_prev2 = self.x_prev1;
-        self.x_prev1 = x_n;
-        self.f_prev2 = self.f_prev1;
-        self.f_prev1 = f_current;
-        self.vf_prev1 = vf_current;
-
-        (x_n, vf_current)
-    }
-
-    pub fn reset(&mut self) {
-        self.x_prev1 = 0.0;
-        self.x_prev2 = 0.0;
-        self.f_prev1 = 0.0;
-        self.f_prev2 = 0.0;
-        self.vf_prev1 = 0.0;
-    }
-}
 
 pub struct Aerothesis {
     pub params: Arc<AerothesisParams>,
@@ -206,26 +22,25 @@ pub struct Aerothesis {
 
     pub v_fluid_prev: f32,
 
-    pub bore: Bore,
-    pub reed: Reed,
-    pub p_minus: f32,
-    pub current_frequency: f32,
+    pub x_history: VecDeque<f32>,
+
+    pub note_frequency: f32,
 }
 
 #[derive(Enum, PartialEq, Clone, Copy)]
-pub enum OscillationType {
+pub enum InstrumentType {
     #[name = "Single Reed"]
     SingleReed,
-    #[name = "Lip Reed"]
+    #[name = "Rip Reed"]
     LipReed,
 }
 
 #[derive(Enum, PartialEq, Clone, Copy)]
-pub enum BoundaryType {
-    #[name = "Nonlinear Dissipative"]
-    NonlinearDissipative,
-    #[name = "Fixed End"]
-    Fixed,
+pub enum ResonanceType {
+    #[name = "Open Pipe"]
+    OpenPipe,
+    #[name = "Closed Pipe"]
+    ClosedPipe,
 }
 
 #[derive(Params)]
@@ -237,14 +52,8 @@ pub struct AerothesisParams {
     #[id = "gain"]
     pub gain: FloatParam,
 
-    #[id = "output_gain"]
-    pub output_gain: FloatParam,
-
-    #[id = "oscillation_type"]
-    pub oscillation_type: EnumParam<OscillationType>,
-
-    #[id = "boundary_type"]
-    pub boundary_type: EnumParam<BoundaryType>,
+    #[id = "instrument_type"]
+    pub instrument_type: EnumParam<InstrumentType>,
 
     #[id = "ReedLength"]
     pub reed_length: FloatParam,
@@ -272,30 +81,32 @@ pub struct AerothesisParams {
     pub breath_cc: IntParam,
     #[id = "bite_cc"]
     pub bite_cc: IntParam,
+
+    #[id = "resonance_type"]
+    pub resonance_type: EnumParam<ResonanceType>,
+
+    #[id = "resonance_decay"]
+    pub resonance_decay: FloatParam,
 }
 
 impl Default for Aerothesis {
     fn default() -> Self {
-        let sample_rate = 44100.0;
-        let target_freq = 220.0;
-        let params = Arc::new(AerothesisParams::default());
         Self {
-            bore: Bore::new(target_freq, sample_rate, params.boundary_type.value()),
-            params,
+            params: Arc::new(AerothesisParams::default()),
             x_prev: 0.0,
             x_prev2: 0.0,
             v_prev: 0.0,
             f_prev: 0.0,
             f_prev2: 0.0,
-            sample_rate,
+            sample_rate: 44100.0,
 
-            v_breath: 0.0,
+            v_breath: 0.1,
             v_bite: 0.0,
             v_fluid_prev: 0.0,
 
-            reed: Reed::new(),
-            p_minus: 0.0,
-            current_frequency: target_freq,
+            x_history: VecDeque::new(),
+
+            note_frequency: 0.0,
         }
     }
 }
@@ -327,19 +138,7 @@ impl Default for AerothesisParams {
             .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
 
-            output_gain: FloatParam::new(
-                "Output Gain",
-                0.01,
-                FloatRange::Skewed {
-                    min: 0.0,
-                    max: 1.0,
-                    factor: 0.2,
-                },
-            ),
-
-            oscillation_type: EnumParam::new("Oscillation Type", OscillationType::SingleReed),
-
-            boundary_type: EnumParam::new("Boundary Type", BoundaryType::NonlinearDissipative),
+            instrument_type: EnumParam::new("Instrument Type", InstrumentType::SingleReed),
 
             reed_length: FloatParam::new(
                 "Reed Length",
@@ -420,6 +219,17 @@ impl Default for AerothesisParams {
 
             breath_cc: IntParam::new("Breath CC", 2, IntRange::Linear { min: 0, max: 127 }),
             bite_cc: IntParam::new("Bite CC", 11, IntRange::Linear { min: 0, max: 127 }),
+
+            resonance_type: EnumParam::new("Resonance Type", ResonanceType::OpenPipe),
+            resonance_decay: FloatParam::new(
+                "Resonance Decay",
+                0.9,
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 1.0,
+                    factor: 0.8,
+                },
+            ),
         }
     }
 }
@@ -465,6 +275,7 @@ impl Aerothesis {
         let b_prev = RHO / (4.0 * (gap_prev * gap_prev));
         let c_prev = self.v_breath - b_prev * (self.v_fluid_prev * self.v_fluid_prev);
 
+        // Current gap is also based on x_prev in this discrete model for stability
         let gap_curr = (2.0 - self.x_prev).clamp(EPS, 2.0);
         let b_curr = RHO / (4.0 * (gap_curr * gap_curr));
 
@@ -519,6 +330,29 @@ impl Aerothesis {
         let t = 1.0 / self.sample_rate;
         (2.0 / t) * (x - self.x_prev) - self.v_prev
     }
+
+    pub fn resonance(&mut self) -> f32 {
+        let x_n = self.step();
+        let x_oscillator = x_n - self.equilibrium_offset();
+
+        let resonance = if self.resonance_delay_samples() > self.x_history.len() as f32 {
+            0.0
+        } else {
+            let decay: f32 = if self.params.resonance_type.value() == ResonanceType::OpenPipe {
+                1.0
+            } else {
+                -1.0
+            } * self.params.resonance_decay.value();
+            let x_delay = self.x_history.pop_front().unwrap_or(0.0);
+            decay * x_delay
+        };
+
+        let x_current = x_oscillator + resonance;
+        self.x_history.push_back(x_current);
+
+        x_current
+    }
+
     fn equilibrium_offset(&self) -> f32 {
         let f = self.f();
         let k = self.k();
@@ -527,6 +361,16 @@ impl Aerothesis {
         } else {
             0.0
         }
+    }
+    fn resonance_delay_samples(&self) -> f32 {
+        if self.params.resonance_type.value() == ResonanceType::OpenPipe {
+            self.sample_rate / self.note_frequency
+        } else {
+            self.sample_rate / 2.0 / self.note_frequency
+        }
+    }
+    fn avg_x_history(&self) -> f32 {
+        self.x_history.iter().sum::<f32>() / self.x_history.len() as f32
     }
 }
 
@@ -578,21 +422,13 @@ impl Plugin for Aerothesis {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
-        self.bore = Bore::new(
-            self.current_frequency,
-            self.sample_rate,
-            self.params.boundary_type.value(),
-        );
         true
     }
 
     fn reset(&mut self) {
         // Reset buffers and envelopes here. This can be called from the audio thread and may not
         // allocate. You can remove this function if you do not need it.
-        self.bore.reset();
-        self.reed.reset();
-        self.p_minus = 0.0;
-        self.v_breath = 0.0;
+        self.x_history.clear();
     }
 
     fn process(
@@ -615,52 +451,26 @@ impl Plugin for Aerothesis {
                         self.v_bite = value;
                     }
                 }
-                NoteEvent::NoteOn { note, .. } => {
-                    self.current_frequency = util::midi_note_to_freq(note);
-                    self.bore.set_frequency(
-                        self.current_frequency,
-                        self.sample_rate,
-                        self.params.boundary_type.value(),
-                    );
+                NoteEvent::NoteOn {
+                    timing: _,
+                    voice_id: _,
+                    channel: _,
+                    note,
+                    velocity: _,
+                } => {
+                    self.reset();
+                    self.note_frequency = util::midi_note_to_freq(note);
                 }
                 _ => (),
             }
         }
 
-        let t = 1.0 / self.sample_rate;
-
         for channel_samples in buffer.iter_samples() {
             let gain = self.params.gain.smoothed.next();
-
-            let p_total = self.v_breath + self.p_minus;
-            let (x_n, vf_n) = self.reed.step(
-                p_total,
-                self.params.oscillation_type.value(),
-                self.sample_rate,
-                &self.params,
-                self.v_bite,
-            );
-
-            let gap = (2.0 - x_n).max(1e-5);
-            let u = vf_n * gap;
-            let p_mouth = self.p_minus + self.bore.z0 * u;
-            let p_plus = p_mouth - self.p_minus;
-
-            self.p_minus = self.bore.step(p_plus, t, self.params.boundary_type.value());
-
-            let mut output = (p_mouth * self.params.output_gain.value()).clamp(-1.0, 1.0);
-
-            if self.v_breath < 1e-4 {
-                output = 0.0;
-                self.bore.reset();
-                self.reed.reset();
-                self.p_minus = 0.0;
-            }
-
-            let final_output = output * gain;
+            let x_current = self.resonance() - self.avg_x_history();
 
             for sample in channel_samples {
-                *sample = final_output;
+                *sample = (x_current * gain).clamp(-1.0, 1.0);
             }
         }
 
@@ -679,7 +489,6 @@ impl ClapPlugin for Aerothesis {
         ClapFeature::AudioEffect,
         ClapFeature::Stereo,
         ClapFeature::NoteDetector,
-        ClapFeature::Instrument,
     ];
 }
 
