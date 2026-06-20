@@ -227,9 +227,9 @@ Where the round-trip delay length $T$ in samples is defined as:
 
 To maintain a stable simulation without algebraic loops, the signal flow follows this recursive update per sample:
 
-1. **Retrieve:** $x_{\text{res}} = R \cdot \text{delay\_buffer}[\text{ptr}]$
-2. **Compute:** $x_{\text{curr}} = a \cdot (x_{\text{prev}} - (x_{\text{in}} + x_{\text{res}}))^2$
-3. **Update:** $\text{delay\_buffer}[\text{ptr}] = x_{\text{curr}}$
-4. **Advance:** $\text{ptr} = (\text{ptr} + 1) \pmod T$
+1. **Retrieve:** $`x_{\text{res}} = R \cdot \text{delay\_buffer}[\text{ptr}]`$
+2. **Compute:** $`x_{\text{curr}} = a \cdot (x_{\text{prev}} - (x_{\text{in}} + x_{\text{res}}))^2`$
+3. **Update:** $`\text{delay\_buffer}[\text{ptr}] = x_{\text{curr}}`$
+4. **Advance:** $`\text{ptr} = (\text{ptr} + 1) \pmod T`$
 
 This approach effectively emulates the harmonic series and spectral decay of real instruments by utilizing the time-domain round-trip of the displacement wave as the primary oscillator, while the non-linear term $( \dots )^2$ provides the necessary harmonic distortion and energy dissipation.
