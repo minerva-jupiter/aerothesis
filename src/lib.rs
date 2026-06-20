@@ -22,9 +22,11 @@ pub struct Aerothesis {
 
     pub v_fluid_prev: f32,
 
-    pub displacement_history: VecDeque<f32>,
-    pub displacement_prev: f32,
+    pub x_history: VecDeque<f32>,
+
     pub note_frequency: f32,
+
+    pub displacement_prev: f32,
 }
 
 #[derive(Enum, PartialEq, Clone, Copy)]
@@ -104,9 +106,11 @@ impl Default for Aerothesis {
             v_bite: 0.0,
             v_fluid_prev: 0.0,
 
-            displacement_history: VecDeque::new(),
-            displacement_prev: 0.0,
+            x_history: VecDeque::new(),
+
             note_frequency: 0.0,
+
+            displacement_prev: 0.0,
         }
     }
 }
@@ -223,7 +227,7 @@ impl Default for AerothesisParams {
             resonance_type: EnumParam::new("Resonance Type", ResonanceType::OpenPipe),
             resonance_decay: FloatParam::new(
                 "Resonance Decay",
-                0.01,
+                0.9,
                 FloatRange::Skewed {
                     min: 0.0,
                     max: 1.0,
@@ -332,31 +336,40 @@ impl Aerothesis {
     }
 
     pub fn resonance(&mut self) -> f32 {
-        let x_n = self.step();
-        let x_oscillator = x_n - self.equilibrium_offset();
-
-        let resonance = if self.resonance_delay_samples() > self.displacement_history.len() as f32 {
+        if self.resonance_delay_samples() > self.x_history.len() as f32 {
             0.0
         } else {
+            if self.resonance_delay_samples() < self.x_history.len() as f32 {
+                self.x_history
+                    .truncate(self.resonance_delay_samples() as usize);
+            }
             let decay: f32 = if self.params.resonance_type.value() == ResonanceType::OpenPipe {
                 1.0
             } else {
                 -1.0
             };
-            let x_delay = self.displacement_history.pop_front().unwrap_or(0.0);
+            let x_delay = self.x_history.pop_back().unwrap_or(0.0);
             decay * x_delay
-        };
+        }
+    }
 
-        let x_nondamping = x_oscillator + resonance;
+    pub fn displacement(&mut self) -> f32 {
+        let x_n = self.step();
+        let x_oscillator = x_n - self.equilibrium_offset();
 
-        let x_current = x_nondamping
-            * (1.0 - self.params.resonance_decay.value())
-            * (self.displacement_prev - x_nondamping)
-            * (self.displacement_prev - x_nondamping);
+        let resonance = self.resonance();
 
-        self.displacement_history.push_back(x_current);
+        let x_current = x_oscillator + resonance;
 
-        x_current
+        let displacement = x_current
+            * (self.params.resonance_decay.value()
+                * (x_current - self.displacement_prev)
+                * (x_current - self.displacement_prev))
+                .clamp(0.0, 1.0);
+        self.displacement_prev = displacement;
+
+        self.x_history.push_front(displacement);
+        x_oscillator
     }
 
     fn equilibrium_offset(&self) -> f32 {
@@ -368,15 +381,15 @@ impl Aerothesis {
             0.0
         }
     }
-    fn resonance_delay_samples(&self) -> f32 {
+    pub fn resonance_delay_samples(&self) -> f32 {
         if self.params.resonance_type.value() == ResonanceType::OpenPipe {
             self.sample_rate / self.note_frequency
         } else {
             self.sample_rate / 2.0 / self.note_frequency
         }
     }
-    fn avg_x_history(&self) -> f32 {
-        self.displacement_history.iter().sum::<f32>() / self.displacement_history.len() as f32
+    pub fn avg_x_history(&self) -> f32 {
+        self.x_history.iter().sum::<f32>() / self.x_history.len() as f32
     }
 }
 
@@ -434,8 +447,7 @@ impl Plugin for Aerothesis {
     fn reset(&mut self) {
         // Reset buffers and envelopes here. This can be called from the audio thread and may not
         // allocate. You can remove this function if you do not need it.
-
-        // self.displacement_history.clear();
+        self.x_history.clear();
     }
 
     fn process(
@@ -474,10 +486,15 @@ impl Plugin for Aerothesis {
 
         for channel_samples in buffer.iter_samples() {
             let gain = self.params.gain.smoothed.next();
-            let x_current = self.resonance() - self.avg_x_history();
+            let x_current = self.displacement() - self.avg_x_history();
 
             for sample in channel_samples {
-                *sample = (x_current * gain).clamp(-1.0, 1.0);
+                if self.note_frequency == 0.0 {
+                    self.x_history.clear();
+                    *sample = 0.0;
+                } else {
+                    *sample = (x_current * gain).clamp(-1.0, 1.0);
+                }
             }
         }
 

@@ -10,13 +10,13 @@ cargo xtask bundle aerothesis --release
 
 ## Design
 
-Purpose of this repository is creating an expressive wind synthesizer, like real trumpets, saxophones and other instruments.
+The purpose of this repository is to create an expressive wind synthesizer, simulating real trumpets, saxophones, and other wind instruments.
 
 ### Architecture
 
 #### Primary oscillation
 
-This parts play a role of generating sounds like the reed on a saxophone or the lips on a trumpet.
+This part plays the role of generating sound, simulating the reed on a saxophone or the lips on a trumpet.
 
 <details>
 <summary>TL;DR Derivation of the simulation formula</summary>
@@ -141,13 +141,13 @@ Since $\sigma < 0$, $(1 + \frac{T}{2}\sigma)^2 < (1 - \frac{T}{2}\sigma)^2$, mat
 
 </details>
 
-x(,f and v_f) formuler is 
+The formula for $x[n]$, $f[n]$, and $v_f[n]$ is:
 
 $$x[n] = \frac{b_0 f[n] + b_1 f[n-1] + b_2 f[n-2] - a_1 x[n-1] - a_2 x[n-2]}{a_0}$$
 
 $$f[n] = \pm \frac{1}{2} \rho v_f[n]^2 g[n]$$
 
-$$v_f[n] = \frac{-\alpha + \sqrt{\alpha^2 + 4 B[n] \Gamma[n-1]}}{2 B[n]}$$
+$$v_f[n] = \frac{-A + \sqrt{A^2 + 4 B[n] C[n-1]}}{2 B[n]}$$
 
 #### Resonance Part
 
@@ -158,9 +158,9 @@ Rather than simulating wave reflection through complex fluid dynamics (changes i
 
 #### 1. Damping Mechanism
 
-Energy in an acoustic system is proportional to the square of the time derivative of displacement ($(\partial x / \partial t)^2$). We apply a damping constant $a$ to this derivative. This effectively attenuates higher-frequency components, as their energy dissipates faster than lower-frequency components. Given an input displacement $x_n$, a delayed resonant displacement $x_{\text{resonance}}$, and the total previous displacement $x_{\text{prev}}$, the system state is updated as:
+Energy in an acoustic system is proportional to the square of the time derivative of displacement ($(\partial x / \partial t)^2$). We apply a damping constant $a$ to this derivative. To preserve the sign of the wave (preventing signal rectification and DC offset), the damping is implemented as a sign-preserving cubic non-linearity. Given an input displacement $x_{\text{in}}[n]$, a delayed resonant displacement $x_{\text{resonance}}[n]$, and the total previous displacement $x[n-1]$, the system state $x[n]$ is updated as:
 
-$$x = a (x_{\text{prev}} - (x_n + x_{\text{resonance}}))^2$$
+$$x[n] = (x_{\text{in}}[n] + x_{\text{resonance}}[n]) \cdot a \cdot (x[n-1] - (x_{\text{in}}[n] + x_{\text{resonance}}[n]))^2$$
 
 #### 2. Physical Validity (D’Alembert’s Solution)
 
@@ -184,8 +184,8 @@ Consequently, calculating the resonance by multiplying the previously delayed di
 
 Given a note frequency $f$ and the speed of sound $c$, the wavelength $\lambda$ is defined as $\lambda = c/f$.
 
-* **Open Pipe:** $\lambda = 2L \implies \text{round-trip time} = 2L/c = 1/f$.
-* **Closed Pipe:** $\lambda = 4L \implies \text{round-trip time} = 4L/c = 2/f$.
+* **Open Pipe:** $\lambda = 2L \implies \text{round-trip time} = 2L/c = \frac{2}{c} \frac{c}{2f} = \frac{1}{f}$.
+* **Closed Pipe:** $\lambda = 4L \implies \text{round-trip time} = 2L/c = \frac{2}{c} \frac{c}{4f} = \frac{1}{2f}$.
 
 Thus, the required delay samples can be derived directly from the frequency $f$ and sample rate $fs$ without needing explicit values for tube length $L$ or sound speed $c$.
 
@@ -197,17 +197,22 @@ The core simulation is based on a displacement-driven delay-line model, where th
 
 1. System Update Equation
 
-The total displacement $x[n]$ is calculated as a damped non-linear function of the input and the delayed resonant state. Given a damping constant $a$ ($0 < a \le 1$):
+The total displacement $x[n]$ is calculated as a damped non-linear function of the input and the delayed resonant state. To preserve the sign of the displacement wave and avoid DC rectification, a sign-preserving cubic function is used. Given a damping constant $a$ ($0 < a \le 1$):
 
-$$x[n] = a \cdot \left( x[n-1] - (x_{\text{in}}[n] + x_{\text{resonance}}[n]) \right)^2$$
+$$x[n] = (x_{\text{in}}[n] + x_{\text{resonance}}[n]) \cdot a \cdot \left( x[n-1] - (x_{\text{in}}[n] + x_{\text{resonance}}[n]) \right)^2$$
 
 Where $x[n-1]$ represents the previous total displacement, capturing the system's memory.
 
 2. Resonant Feedback (Delay and Reflection)
 
-The resonant component $x_{\text{resonance}}$ is the delayed state derived from the pipe's boundary conditions. Given a delay buffer $D$ of length $T$ (where $T = f_s / f$), the resonance is defined by the reflection coefficient $R$:
+The resonant component $x_{\text{resonance}}$ is the delayed state derived from the pipe's boundary conditions. Given a delay buffer $D$ of length $T$, the resonance is defined by the reflection coefficient $R$:
 
 $$x_{\text{resonance}}[n] = R \cdot \text{buffer}[n - T]$$
+
+Where the round-trip delay length $T$ in samples is defined as:
+* **Open Pipes:** $T = \frac{f_s}{f}$
+* **Closed Pipes:** $T = \frac{f_s}{2f}$
+
 
 * **For Open Pipes (Open-Open):**
 * Reflection occurs twice per round-trip with a phase inversion, resulting in $R = 1$ (net phase preserved).
