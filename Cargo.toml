@@ -13,6 +13,10 @@ members = ["xtask"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "aerothesis-bin"
+path = "src/main.rs"
+
 [dependencies]
 # Remove the `assert_process_allocs` feature to allow allocations on the audio
 # thread in debug builds.

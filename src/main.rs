@@ -10,8 +10,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let num_samples = (sample_rate * seconds) as usize;
 
     plugin.sample_rate = sample_rate;
-    // plugin.note_frequency = util::midi_note_to_freq(48); // C3 (u8)
-    plugin.note_frequency = util::midi_note_to_freq(54); // C4 (u8)
+    plugin.note_frequency = util::midi_note_to_freq(60); // C4 (u8)
+                                                         // plugin.note_frequency = util::midi_note_to_freq(54); // F#3 (u8)
 
     // For simulation in main.rs, we use the default parameters from AerothesisParams::default()
     // because nih-plug parameters are designed to be managed by a host and don't have
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Default resonance: OpenPipe, Decay: 0.9
 
     let mut displacements = Vec::with_capacity(num_samples);
-    let mut resonances = Vec::with_capacity(num_samples);
+    let mut osc = Vec::with_capacity(num_samples);
 
     for i in 0..num_samples {
         // let x_current = self.resonance() - self.avg_x_history();
@@ -36,8 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let sample = plugin.displacement() - plugin.avg_x_history();
+        osc.push(plugin.osc_x());
         displacements.push(sample);
-        resonances.push(plugin.resonance());
     }
 
     let len = (sample_rate * 0.05) as usize;
@@ -70,6 +70,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         spectrum_data.push((freq, complex.norm()));
+    }
+    if let Some(max) = spectrum_data
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.1.partial_cmp(&b.1).unwrap())
+    {
+        println!("max freq is {} Hz", max.0);
     }
 
     println!("\n--- Spectrum (0 - 2000Hz) ---");

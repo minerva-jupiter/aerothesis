@@ -27,6 +27,11 @@ pub struct Aerothesis {
     pub note_frequency: f32,
 
     pub displacement_prev: f32,
+    pub velocity_prev: f32,
+    pub displacement_prev2: f32,
+    pub accel_prev: f32,
+    pub f: f32,
+    pub resonance: f32,
 }
 
 #[derive(Enum, PartialEq, Clone, Copy)]
@@ -111,6 +116,11 @@ impl Default for Aerothesis {
             note_frequency: 0.0,
 
             displacement_prev: 0.0,
+            velocity_prev: 0.0,
+            displacement_prev2: 0.0,
+            accel_prev: 0.0,
+            f: 0.0,
+            resonance: 0.0,
         }
     }
 }
@@ -217,8 +227,11 @@ impl Default for AerothesisParams {
             ),
             feedback_gain: FloatParam::new(
                 "Feedback Gain",
-                0.1,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
+                5.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 10.0,
+                },
             ),
 
             breath_cc: IntParam::new("Breath CC", 2, IntRange::Linear { min: 0, max: 127 }),
@@ -239,15 +252,15 @@ impl Default for AerothesisParams {
 }
 
 impl Aerothesis {
-    pub fn step(&mut self) -> f32 {
-        let x_n = self.x();
+    pub fn osc(&mut self) -> f32 {
+        let x_n = self.osc_x();
         let v_n = self.v(x_n);
 
         self.x_prev2 = self.x_prev;
         self.x_prev = x_n;
 
         self.f_prev2 = self.f_prev;
-        self.f_prev = self.f();
+        self.f_prev = self.f;
 
         self.v_prev = v_n;
         self.v_fluid_prev = self.vf();
@@ -277,7 +290,9 @@ impl Aerothesis {
 
         let gap_prev = (2.0 - self.x_prev).clamp(EPS, 2.0);
         let b_prev = RHO / (4.0 * (gap_prev * gap_prev));
-        let c_prev = self.v_breath - b_prev * (self.v_fluid_prev * self.v_fluid_prev);
+        let pressure = self.params.base_damping.value()
+            * (self.v_breath + self.resonance * 100.0 * self.params.feedback_gain.value());
+        let c_prev = pressure - b_prev * (self.v_fluid_prev * self.v_fluid_prev);
 
         // Current gap is also based on x_prev in this discrete model for stability
         let gap_curr = (2.0 - self.x_prev).clamp(EPS, 2.0);
@@ -306,14 +321,15 @@ impl Aerothesis {
         } else {
             0.5 * RHO * (v_fluid_current * v_fluid_current) * gap_curr
         };
+
         f_current
     }
-    pub fn x(&self) -> f32 {
+    pub fn osc_x(&mut self) -> f32 {
         let m = self.m();
         let r = self.r();
         let k = self.k();
         let t = 1.0 / self.sample_rate;
-        let f_current = self.f();
+        let f_current = self.f;
 
         let b0 = t * t;
         let b1 = 2.0 * t * t;
@@ -352,28 +368,29 @@ impl Aerothesis {
             decay * x_delay
         }
     }
-
     pub fn displacement(&mut self) -> f32 {
-        let x_n = self.step();
-        let x_oscillator = x_n - self.equilibrium_offset();
+        self.resonance = self.resonance();
+        self.f = self.f();
+        let x_n = self.osc();
+        let x_current = x_n - self.equilibrium_offset();
 
-        let resonance = self.resonance();
+        // let displacement = x_current
+        //     * (self.params.resonance_decay.value()
+        //         * (x_current - self.displacement_prev)
+        //         * (x_current - self.displacement_prev))
+        //         .clamp(0.0, 1.0);
+        let displacement = x_current;
 
-        let x_current = x_oscillator + resonance;
-
-        let displacement = x_current
-            * (self.params.resonance_decay.value()
-                * (x_current - self.displacement_prev)
-                * (x_current - self.displacement_prev))
-                .clamp(0.0, 1.0);
         self.displacement_prev = displacement;
 
         self.x_history.push_front(displacement);
-        x_oscillator
+        // displacement + self.resonance
+        displacement
+        // self.resonance
     }
 
     fn equilibrium_offset(&self) -> f32 {
-        let f = self.f();
+        let f = self.f;
         let k = self.k();
         if k > 0.0 {
             (f / k).clamp(0.0, 1.8)
@@ -465,7 +482,7 @@ impl Plugin for Aerothesis {
                     value,
                 } => {
                     if cc as i32 == self.params.breath_cc.value() {
-                        self.v_breath = value * self.params.pressure_scale.value();
+                        self.v_breath = value;
                     } else if cc as i32 == self.params.bite_cc.value() {
                         self.v_bite = value;
                     }
@@ -486,7 +503,7 @@ impl Plugin for Aerothesis {
 
         for channel_samples in buffer.iter_samples() {
             let gain = self.params.gain.smoothed.next();
-            let x_current = self.displacement() - self.avg_x_history();
+            let x_current = self.displacement();
 
             for sample in channel_samples {
                 if self.note_frequency == 0.0 {
